@@ -1402,7 +1402,7 @@ If nil, just creates the directory and starts the agent immediately."
   "Advice for agent-shell--on-request. Notify on permission requests.
 ORIG-FN is the original function, ARGS are its arguments."
   (let* ((state (plist-get args :state))
-         (request (plist-get args :request))
+         (request (plist-get args :acp-request))
          (method (alist-get 'method request))
          (buffer (and state (alist-get :buffer state))))
     (when (and buffer
@@ -1483,7 +1483,7 @@ ORIG-FN is the original function, ARGS are its arguments."
     (when (and buffer
                (buffer-live-p buffer)
                (buffer-local-value 'agent-shell-to-go-mode buffer))
-      (let* ((notification (plist-get args :notification))
+      (let* ((notification (plist-get args :acp-notification))
              (params (alist-get 'params notification))
              (update (alist-get 'update params))
              (update-type (alist-get 'sessionUpdate update))
@@ -1661,7 +1661,7 @@ ORIG-FN is the original function, ARGS are its arguments."
   "Set MODE-ID in BUFFER, notify THREAD-TS with MODE-NAME and EMOJI."
   (with-current-buffer buffer
     (agent-shell--set-default-session-mode
-     :shell nil
+     :shell-buffer (get-buffer buffer)
      :mode-id mode-id
      :on-mode-changed (lambda ()
                         (agent-shell-to-go--send
