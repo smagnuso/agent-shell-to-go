@@ -343,6 +343,24 @@ Each entry: (slack-msg-ts . (:request-id id :buffer buffer :options options))")
 (defvar agent-shell-to-go--websocket-reconnect-timer nil
   "Timer for reconnecting WebSocket.")
 
+(defvar agent-shell-to-go--websocket-last-frame-time nil
+  "Time of the last frame received on the WebSocket.
+Used to detect silently-dead connections that `websocket-openp' still
+reports as open (e.g. after laptop sleep/wake or a NAT timeout that
+never delivered a TCP FIN).")
+
+(defcustom agent-shell-to-go-websocket-stale-threshold 7200
+  "Seconds without a frame from Slack before the WebSocket is considered stale.
+Slack Socket Mode normally sends a `disconnect' message at least once
+per hour as part of socket rotation, so a long silence indicates the
+underlying TCP connection has died without firing :on-close.
+
+Set to nil to disable staleness checking and rely solely on
+`websocket-openp'."
+  :type '(choice (integer :tag "Seconds")
+                 (const :tag "Disabled" nil))
+  :group 'agent-shell-to-go)
+
 (defconst agent-shell-to-go--reaction-map
   '(("white_check_mark" . allow)
     ("+1" . allow)
@@ -977,6 +995,7 @@ Optionally also match CHANNEL-ID if provided."
 
 (defun agent-shell-to-go--handle-websocket-message (frame)
   "Handle incoming WebSocket FRAME from Slack."
+  (setq agent-shell-to-go--websocket-last-frame-time (current-time))
   (let* ((payload (websocket-frame-text frame))
          (data (json-read-from-string payload))
          (type (alist-get 'type data))
@@ -1640,6 +1659,7 @@ If nil, just creates the directory and starts the agent immediately."
     (ignore-errors (websocket-close agent-shell-to-go--websocket))
     (setq agent-shell-to-go--intentional-close nil))
   (let ((ws-url (agent-shell-to-go--get-websocket-url)))
+    (setq agent-shell-to-go--websocket-last-frame-time (current-time))
     (setq agent-shell-to-go--websocket
           (websocket-open ws-url
                           :on-message (lambda (_ws frame)
@@ -1668,6 +1688,7 @@ If nil, just creates the directory and starts the agent immediately."
     (setq agent-shell-to-go--intentional-close t)
     (ignore-errors (websocket-close agent-shell-to-go--websocket))
     (setq agent-shell-to-go--websocket nil)
+    (setq agent-shell-to-go--websocket-last-frame-time nil)
     (setq agent-shell-to-go--intentional-close nil)))
 
 ;;; Advice functions to hook into agent-shell
@@ -2354,9 +2375,19 @@ Returns t if was already connected, 'connected if newly connected, nil on failur
 
 ;;;###autoload
 (defun agent-shell-to-go--websocket-healthy-p ()
-  "Return non-nil if the websocket connection is healthy."
+  "Return non-nil if the websocket connection is healthy.
+Considers the connection unhealthy if no frame has been received for
+longer than `agent-shell-to-go-websocket-stale-threshold' seconds, since
+silently-dead TCP connections (laptop sleep/wake, NAT timeout) can leave
+`websocket-openp' returning t."
   (and agent-shell-to-go--websocket
-       (websocket-openp agent-shell-to-go--websocket)))
+       (websocket-openp agent-shell-to-go--websocket)
+       (or (null agent-shell-to-go-websocket-stale-threshold)
+           (null agent-shell-to-go--websocket-last-frame-time)
+           (< (float-time
+               (time-subtract (current-time)
+                              agent-shell-to-go--websocket-last-frame-time))
+              agent-shell-to-go-websocket-stale-threshold))))
 
 (defun agent-shell-to-go-ensure-all-connected ()
   "Ensure all agent-shell buffers are connected to Slack.
